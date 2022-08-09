@@ -15,10 +15,10 @@ pub struct UpgradableChannel {
     channel2: Option<Pin<Box<dyn Channel>>>,
     is_upgraded_reads: bool,
     is_upgraded_writes: bool,
+    channel2_buffer: Vec<u8>,
 }
 
-// TODO: merge `channel1` and `channel1_msg` into one stream
-// TODO: buffer `channel2` messages until upgraded for reads
+// TODO: create `channel1_msg` out of `channel1`
 
 impl UpgradableChannel {
     pub fn new(
@@ -32,6 +32,7 @@ impl UpgradableChannel {
             channel2: None,
             is_upgraded_reads: false,
             is_upgraded_writes: false,
+            channel2_buffer: vec![],
         };
     }
 }

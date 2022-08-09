@@ -1,5 +1,5 @@
 [package]
-name = "upgradable-channel-rs"
+name = "upgradable-channel"
 version = "0.1.0"
 edition = "2018"
 
@@ -9,7 +9,7 @@ edition = "2018"
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.6", features = ["codec"] }
-cs-utils = { version = "0.20", features = ["test", "traits", "async"] }
+cs-utils = { version = "0.21", features = ["test", "traits", "async", "experimental"] }
 cs-trace = { version = "0.12" }
 connection-utils = { version = "0.2", features = ["test"] }
 serde = "1"

@@ -3,8 +3,9 @@ use std::pin::Pin;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use connection_utils::Channel;
+use tokio::io::AsyncReadExt;
 use tokio_util::codec::Framed;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, select, FutureExt};
 use cs_utils::futures::GenericCodec;
 
 use crate::{traits::TUpgradableChannel, channel::{UpgradableChannel, ChannelMessage}};
@@ -20,7 +21,7 @@ impl TUpgradableChannel for UpgradableChannel {
         new_channel: Box<dyn Channel>,
     ) -> Result<()> {
         // save `channel2` instance for later use
-        self.channel2.replace(Pin::new(new_channel));
+        let mut channel2 = Pin::new(new_channel);
 
         // create control message channel stream
         let mut channel1_msg = match self.channel1_msg.take() {
@@ -36,45 +37,86 @@ impl TUpgradableChannel for UpgradableChannel {
         // send Sync immediately
         channel1_msg.send(ChannelMessage::Sync(self.sync_id.clone())).await?;
 
+        // channel2 read buffer
+        let mut buf = [0; 1024];
         loop {
-            // get next message
-            let message = match channel1_msg.next().await {
-                Some(result) => result,
-                None => bail!("Control channel closed."),
-            }?;
+            select! {
+                // read and buffer data from the channel2 until the upgrade
+                // to the new channel is complete
+                maybe_bytes_read = channel2.read(&mut buf).fuse() => {
+                    let bytes_read = maybe_bytes_read?;
+                    
+                    self.channel2_buffer.extend_from_slice(&buf[..bytes_read]);
 
-            match message {
-                // if message is `Sync`, respond with `SyncAck`, that will
-                // signify moving an upgrade to the new channel for all `writes` 
-                ChannelMessage::Sync(sync_id) => {
-                    channel1_msg.send(ChannelMessage::SyncAck(sync_id)).await?;
-
-                    // upgrade for `writes`
-                    self.is_upgraded_writes = true;
-
-                    // fully upgraded
-                    if self.is_upgrdaded() {
-                        return Ok(());
-                    }
+                    continue;
                 },
-                // if message is `Sync`, respond with `SyncAck`, that will
-                // signify moving an upgrade to the new channel for all `reads` 
-                ChannelMessage::SyncAck(sync_id) => {
-                    if sync_id != self.sync_id {
-                        bail!("SyncAck id mismatch.");
-                    }
+                // negotiate upgrade to the new channel
+                message = channel1_msg.next().fuse() => {
+                    // get next message
+                    let message = match message {
+                        Some(result) => result,
+                        None => bail!("Control channel closed."),
+                    }?;
 
-                    channel1_msg.send(ChannelMessage::SyncAck(sync_id)).await?;
+                    match message {
+                        // if message is `Sync`, respond with `SyncAck`, that will
+                        // signify moving an upgrade to the new channel for all `writes` 
+                        ChannelMessage::Sync(sync_id) => {
+                            let sync_ack = ChannelMessage::SyncAck(sync_id, self.sync_id.clone());
+                            channel1_msg.send(sync_ack).await?;
 
-                    // upgrade for `reads`
-                    self.is_upgraded_reads = true;
+                            // upgrade for `writes`
+                            self.is_upgraded_writes = true;
 
-                    // fully upgraded
-                    if self.is_upgrdaded() {
-                        return Ok(());
-                    }
+                            // fully upgraded
+                            if self.is_upgrdaded() {
+                                self.channel2.replace(channel2);
+
+                                return Ok(());
+                            }
+                        },
+                        // if message is `Sync`, respond with `SyncAck`, that will
+                        // signify moving an upgrade to the new channel for all `reads` 
+                        ChannelMessage::SyncAck(our_sync_id, their_sync_id) => {
+                            if our_sync_id != self.sync_id {
+                                bail!("SyncAck id mismatch.");
+                            }
+
+                            // upgrade for `reads`
+                            self.is_upgraded_reads = true;
+
+                            channel1_msg.send(ChannelMessage::Ack(their_sync_id)).await?;
+
+                            // upgrade for `writes`
+                            self.is_upgraded_writes = true;
+
+                            // fully upgraded
+                            if self.is_upgrdaded() {
+                                self.channel2.replace(channel2);
+
+                                return Ok(());
+                            }
+                        },
+                        // if message is `Sync`, respond with `SyncAck`, that will
+                        // signify moving an upgrade to the new channel for all `reads` 
+                        ChannelMessage::Ack(sync_id) => {
+                            if sync_id != self.sync_id {
+                                bail!("Ack id mismatch.");
+                            }
+
+                            // upgrade for `reads`
+                            self.is_upgraded_reads = true;
+
+                            // fully upgraded
+                            if self.is_upgrdaded() {
+                                self.channel2.replace(channel2);
+
+                                return Ok(());
+                            }
+                        },
+                    };
                 },
-            };
-        };
+            }
+        }
     }
 }

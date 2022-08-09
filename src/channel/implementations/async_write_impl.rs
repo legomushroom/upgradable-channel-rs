@@ -13,7 +13,14 @@ impl AsyncWrite for UpgradableChannel {
         if self.is_upgraded_writes {
             let channel2 = match self.channel2.as_mut() {
                 Some(channel) => channel,
-                None => return Poll::Ready(todo!()),
+                None => {
+                    #[cfg(debug_assertions)]
+                    panic!("[poll_write] Channel2 not found, but `is_upgraded_writes` is set.");
+
+                    #[cfg(not(debug_assertions))]
+                    return self.channel1.as_mut()
+                        .poll_write(cx, buf);
+                },
             };
 
             return channel2.as_mut()
@@ -31,7 +38,14 @@ impl AsyncWrite for UpgradableChannel {
         if self.is_upgraded_writes {
             let channel2 = match self.channel2.as_mut() {
                 Some(channel) => channel,
-                None => return Poll::Ready(todo!()),
+                None => {
+                    #[cfg(debug_assertions)]
+                    panic!("[poll_flush] Channel2 not found, but `is_upgraded_writes` is set.");
+
+                    #[cfg(not(debug_assertions))]
+                    return self.channel1.as_mut()
+                        .poll_flush(cx);
+                },
             };
 
             return channel2.as_mut()
@@ -49,7 +63,14 @@ impl AsyncWrite for UpgradableChannel {
         if self.is_upgraded_writes {
             let channel2 = match self.channel2.as_mut() {
                 Some(channel) => channel,
-                None => return Poll::Ready(todo!()),
+                None => {
+                    #[cfg(debug_assertions)]
+                    panic!("[poll_shutdown] Channel2 not found, but `is_upgraded_writes` is set.");
+
+                    #[cfg(not(debug_assertions))]
+                    return self.channel1.as_mut()
+                        .poll_shutdown(cx);
+                },
             };
 
             return channel2.as_mut()
