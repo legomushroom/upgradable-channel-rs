@@ -114,12 +114,12 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncRead fo
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        if self.options.throttle_ms > 0 && random_bool() {
-            // let throttle_ms = self.options.throttle_ms;
+        if self.options.throttle_ms > 0 {
+            let throttle_ms = self.options.throttle_ms;
             let waker = cx.waker().clone();
 
             thread::spawn(move || {
-                wait_sync(random_number(1..=25));
+                wait_sync(throttle_ms);
                 waker.wake();
             });
 
@@ -137,12 +137,12 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncWrite f
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        if self.options.throttle_ms > 0 && random_bool() {
-            // let throttle_ms = self.options.throttle_ms;
+        if self.options.throttle_ms > 0 {
+            let throttle_ms = self.options.throttle_ms;
             let waker = cx.waker().clone();
 
             thread::spawn(move || {
-                wait_sync(random_number(5..=15));
+                wait_sync(throttle_ms);
                 waker.wake();
             });
 
@@ -157,12 +157,12 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncWrite f
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
-        if self.options.throttle_ms > 0 && random_bool() {
-            // let throttle_ms = self.options.throttle_ms;
+        if self.options.throttle_ms > 0 {
+            let throttle_ms = self.options.throttle_ms;
             let waker = cx.waker().clone();
 
             thread::spawn(move || {
-                wait_sync(random_number(5..=15));
+                wait_sync(throttle_ms);
                 waker.wake();
             });
 
@@ -177,12 +177,12 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncWrite f
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
-        if self.options.throttle_ms > 0 && random_bool() {
-            // let throttle_ms = self.options.throttle_ms;
+        if self.options.throttle_ms > 0 {
+            let throttle_ms = self.options.throttle_ms;
             let waker = cx.waker().clone();
 
             thread::spawn(move || {
-                wait_sync(random_number(5..=15));
+                wait_sync(throttle_ms);
                 waker.wake();
             });
 
