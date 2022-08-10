@@ -1,12 +1,12 @@
 use std::pin::Pin;
 
 use anyhow::{Result, bail};
-use async_trait::async_trait;
-use connection_utils::Channel;
 use tokio::io::AsyncReadExt;
+use async_trait::async_trait;
 use tokio_util::codec::Framed;
-use futures::{SinkExt, StreamExt, select, FutureExt};
+use connection_utils::Channel;
 use cs_utils::futures::GenericCodec;
+use futures::{SinkExt, StreamExt, select, FutureExt};
 
 use crate::{traits::TUpgradableChannel, channel::{UpgradableChannel, ChannelMessage}};
 
@@ -24,7 +24,7 @@ impl TUpgradableChannel for UpgradableChannel {
         let mut channel2 = Pin::new(new_channel);
 
         // create control message channel stream
-        let mut channel1_msg = match self.channel1_msg.take() {
+        let mut channel1_msg = match self.channel_msg.take() {
             Some(channel) => {
                 Framed::new(
                     channel,

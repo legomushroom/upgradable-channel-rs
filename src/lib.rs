@@ -7,3 +7,5 @@ mod channel;
 pub use channel::UpgradableChannel;
 
 pub mod mocks;
+
+mod interleaved_channel;
