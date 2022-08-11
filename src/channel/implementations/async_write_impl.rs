@@ -1,6 +1,5 @@
 use std::{pin::Pin, task::{Context, Poll}, io};
 
-use futures::{ready, FutureExt};
 use tokio::io::AsyncWrite;
 
 use crate::channel::UpgradableChannel;
@@ -12,15 +11,18 @@ impl AsyncWrite for UpgradableChannel {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         {
-            let mut lock = ready!(Box::pin(self.channel2_writer.lock()).poll_unpin(cx));
+            // println!("[{}][write]> writer lock", self.id);
+
+            let mut lock = self.channel2_writer.lock().unwrap();
 
             if let Some(writer) = lock.as_mut() {
                 return writer.as_mut()
                     .poll_write(cx, buf);
             };
         }
+            // println!("[{}][write]> writer unlock", self.id);
 
-        return self.channel1.as_mut()
+        return self.main_channel.as_mut()
             .poll_write(cx, buf);
     }
 
@@ -29,7 +31,8 @@ impl AsyncWrite for UpgradableChannel {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         {
-            let mut lock = ready!(Box::pin(self.channel2_writer.lock()).poll_unpin(cx));
+            // println!("[{}][flush]> writer lock", self.id);
+            let mut lock = self.channel2_writer.lock().unwrap();
 
             if let Some(writer) = lock.as_mut() {
                 return writer.as_mut()
@@ -37,7 +40,9 @@ impl AsyncWrite for UpgradableChannel {
             };
         }
 
-        return self.channel1.as_mut()
+        // println!("[{}][flush]> writer unlock", self.id);
+
+        return self.main_channel.as_mut()
             .poll_flush(cx);
     }
 
@@ -46,7 +51,8 @@ impl AsyncWrite for UpgradableChannel {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         {
-            let mut lock = ready!(Box::pin(self.channel2_writer.lock()).poll_unpin(cx));
+            // println!("[{}][shutdown]> writer lock", self.id);
+            let mut lock = self.channel2_writer.lock().unwrap();
 
             if let Some(writer) = lock.as_mut() {
                 return writer.as_mut()
@@ -54,7 +60,9 @@ impl AsyncWrite for UpgradableChannel {
             };
         }
 
-        return self.channel1.as_mut()
+        // println!("[{}][shutdown]> writer unlock", self.id);
+
+        return self.main_channel.as_mut()
             .poll_shutdown(cx);
     }
 }

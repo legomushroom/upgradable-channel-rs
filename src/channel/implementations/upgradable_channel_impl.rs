@@ -1,44 +1,54 @@
-use std::sync::Arc;
+use std::{sync::{Arc, Mutex}, pin::Pin};
 
 use anyhow::{Result, bail};
-use tokio::{io::split, sync::Mutex};
 use tokio_util::codec::Framed;
-use connection_utils::Channel;
-use cs_utils::futures::GenericCodec;
+use connection_utils::{Channel, types::TFramedChannel};
+use cs_utils::{futures::GenericCodec, random_str};
 use futures::{SinkExt, StreamExt, select, FutureExt};
+use tokio::{io::split, sync::{oneshot::Receiver, mpsc::Sender}};
 
-use crate::{traits::TUpgradableChannel, channel::{UpgradableChannel, ChannelMessage}, types::{TFramedChannel, TReadHalf, TWriteHalf}};
+use crate::{channel::ChannelMessage, types::{TReadHalf, TWriteHalf}};
 
 async fn handle_control_message(
-    our_sync_id: impl AsRef<str> + ToString,
+    id: String,
+    on_new_channel: Receiver<Box<dyn Channel>>,
     mut control_channel: TFramedChannel<ChannelMessage>,
-    reader: TReadHalf,
-    writer: TWriteHalf,
+    // reader: TReadHalf,
+    // writer: TWriteHalf,
     channel2_reader: Arc<Mutex<Option<TReadHalf>>>,
     channel2_writer: Arc<Mutex<Option<TWriteHalf>>>,
+    channel2_buffer_sender: Sender<Vec<u8>>,
 ) -> Result<()> {
-    let our_sync_id = our_sync_id.to_string();
+    let our_sync_id = random_str(32);
 
-    let mut reader = Some(reader);
-    let mut writer = Some(writer);
+    let mut reader = None;
+    let mut writer = None;
 
-    // send Sync immediately
-    control_channel.send(ChannelMessage::Sync(our_sync_id.clone())).await?;
+    let mut on_new_channel_fused = on_new_channel.fuse();
+
+    let mut is_syn_sent = false;
 
     // channel2 read buffer
     // let mut buf = [0; 1024];
     loop {
-        select! {
-            // read and buffer data from the channel2 until the upgrade
-            // to the news complete
-            // maybe_bytes_read = reader.read(&mut buf).fuse() => {
-            //     let bytes_read = maybe_bytes_read?;
-                
-            //     channel2_buffer.extend_from_slice(&buf[..bytes_read]);
+        if writer.is_some() && !is_syn_sent {
+            println!("[{}]> sending sync", id);
+            control_channel.send(ChannelMessage::Sync(our_sync_id.clone())).await?;
+            println!("[{}]> sync sent", id);
 
-            //     continue;
-            // },
-            // negotiate upgrade to the new channel
+            is_syn_sent = true;
+        }
+
+        select! {
+            maybe_new_channel = on_new_channel_fused => {
+                let new_channel = maybe_new_channel?;
+                let (rx, tx) = split(new_channel);
+
+                println!("[{}]> got new channel", id);
+
+                reader.replace(Box::pin(rx));
+                writer.replace(Box::pin(tx));
+            },
             message = control_channel.next().fuse() => {
                 // get next message
                 let message = match message {
@@ -46,18 +56,28 @@ async fn handle_control_message(
                     None => bail!("Control channel closed."),
                 }?;
 
+                println!("[{}]> got new message: {:?}", id, message);
+
                 match message {
                     // if message is `Sync`, respond with `SyncAck`, that will
                     // signify moving an upgrade to the new channel for all `writes` 
                     ChannelMessage::Sync(sync_id) => {
                         let sync_ack = ChannelMessage::SyncAck(sync_id, our_sync_id.clone());
+
+                        if !writer.is_some() {
+                            continue;
+                        }
+
                         control_channel.send(sync_ack).await?;
 
                         // upgrade for `writes`
                         if let Some(w) = writer.take() {
-                            channel2_writer.lock().await
+                            println!("[{}][upgrade][sync]> upgrade for writes", id);
+                            channel2_writer.lock().unwrap()
                                 .replace(w);
+
                         }
+                        // println!("[{}][upgrade][sync]> writer unlock", id);
                     },
                     // if message is `Sync`, respond with `SyncAck`, that will
                     // signify moving an upgrade to the new channel for all `reads` 
@@ -68,17 +88,21 @@ async fn handle_control_message(
 
                         // upgrade for `reads`
                         if let Some(r) = reader.take() {
-                            channel2_reader.lock().await
+                            println!("[{}][upgrade][sync-ack]> upgrade for reads", id);
+                            channel2_reader.lock().unwrap()
                                 .replace(r);
                         }
-                       
+                        // println!("[{}][upgrade][sync-ack]> reader unlock", id);
+                    
                         control_channel.send(ChannelMessage::Ack(their_sync_id)).await?;
 
                         // upgrade for `writes`
                         if let Some(w) = writer.take() {
-                            channel2_writer.lock().await
+                            println!("[{}][upgrade][sync-ack]> upgrade for writes", id);
+                            channel2_writer.lock().unwrap()
                                 .replace(w);
                         }
+                        // println!("[{}][upgrade][sync-ack]> writer unlock", id);
 
                         // fully upgraded
                         return Ok(());
@@ -92,50 +116,43 @@ async fn handle_control_message(
 
                         // upgrade for `reads`
                         if let Some(r) = reader.take() {
-                            channel2_reader.lock().await
+                            println!("[{}][upgrade][ack]> upgrade for reads", id);
+
+                            channel2_reader.lock().unwrap()
                                 .replace(r);
                         }
+                        // println!("[{}][upgrade][ack]> reader unlock", id);
 
                         return Ok(());
                     },
                 };
-            },
+            }
         }
     }
 }
 
-impl TUpgradableChannel for UpgradableChannel {
-    // fn is_upgrdaded(&self) -> bool {
-    //     return self.is_upgraded_writes && self.is_upgraded_reads;
-    // }
+pub async fn handle_upgrade(
+    id: String,
+    on_new_channel: Receiver<Box<dyn Channel>>,
+    control_channel: Box<dyn Channel>,
+    channel2_reader: Arc<Mutex<Option<TReadHalf>>>,
+    channel2_writer: Arc<Mutex<Option<TWriteHalf>>>,
+    channel2_buffer_sender: Sender<Vec<u8>>,
+) -> Result<()> {
+    // create control message channel stream
+    let control_channel = Framed::new(
+        Pin::new(control_channel),
+        GenericCodec::<ChannelMessage>::new(),
+    );
 
-    fn upgrade(
-        &mut self,
-        new_channel: Box<dyn Channel>,
-    ) -> Result<()> {
-        // create control message channel stream
-        let control_channel = match self.channel_msg.take() {
-            Some(channel) => {
-                Framed::new(
-                    channel,
-                    GenericCodec::<ChannelMessage>::new(),
-                )
-            },
-            None => bail!("Contol message channel not found."),
-        };
+    let _res = handle_control_message(
+        id,
+        on_new_channel,
+        control_channel,
+        channel2_reader,
+        channel2_writer,
+        channel2_buffer_sender,
+    ).await;
 
-        let (reader, writer) = split(new_channel);
-
-        tokio::spawn(handle_control_message(
-            self.sync_id.clone(),
-            control_channel,
-            Box::pin(reader),
-            Box::pin(writer),
-            Arc::clone(&self.channel2_reader),
-            Arc::clone(&self.channel2_writer),
-
-        ));
-
-        return Ok(());
-    }
+    return Ok(());
 }

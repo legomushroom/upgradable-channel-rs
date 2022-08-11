@@ -11,7 +11,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.6", features = ["codec"] }
 cs-utils = { version = "0.21", features = ["test", "traits", "async", "experimental"] }
 cs-trace = { version = "0.12" }
-connection-utils = { version = "0.2", features = ["test"] }
+connection-utils = { version = "0.3", features = ["test"] }
 serde = "1"
 futures = { version = "0.3" }
 bytes = "1.1"

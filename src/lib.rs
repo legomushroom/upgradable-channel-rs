@@ -9,3 +9,5 @@ pub use channel::UpgradableChannel;
 pub mod mocks;
 
 mod interleaved_channel;
+
+mod utils;

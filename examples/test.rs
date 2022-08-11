@@ -1,46 +1,48 @@
-use cs_utils::{futures::wait_random, random_number};
-use upgradable_channel::{UpgradableChannel, mocks::{channel_mock_pair, ChannelMockOptions}, TUpgradableChannel};
+use anyhow::anyhow;
+use connection_utils::test::test_async_stream;
+use cs_utils::{futures::wait_random, random_number, random_str};
+use upgradable_channel::{UpgradableChannel, mocks::{channel_mock_pair, ChannelMockOptions}};
 
 #[tokio::main]
 async fn main() {
     let options1 = ChannelMockOptions::default()
-        .throttle_ms(random_number(100..=200));
+        .throttle_ms(random_number(1..=3));
     let options2 = ChannelMockOptions::default()
-        .throttle_ms(random_number(100..=200));
+        .throttle_ms(random_number(1..=3));
 
-    let (local_channel1, remote_channel1) = channel_mock_pair(options1);
-    let (local_channel2, remote_channel2) = channel_mock_pair(options2);
+    let (local_channel1, remote_channel1) = channel_mock_pair(options1.clone(), options1.clone());
+    let (local_channel2, remote_channel2) = channel_mock_pair(options2.clone(), options2.clone());
+
+    let (on_local_channel1, local_upgradable_channel1) = UpgradableChannel::new("local", local_channel1);
+    let (on_remote_channel1, remote_upgradable_channel1) = UpgradableChannel::new("remote", remote_channel1);
 
     tokio::try_join!(
         tokio::spawn(async move {
-            wait_random(50..=200).await;
+            println!("> starting data transfer");
 
-            let mut local_channel1 = UpgradableChannel::new(local_channel1);
+            test_async_stream(local_upgradable_channel1, remote_upgradable_channel1, random_str(5 * 4096)).await;
 
-            println!("> upgrading local channel");
-
-            local_channel1.upgrade(local_channel2)
-                .expect("Cannot upgrade local channel.");
-
-            // assert!(local_channel1.is_upgrdaded());
-
-            println!("> local channel upgraded");
+            println!("> data transfer complete");
         }),
         tokio::spawn(async move {
-            wait_random(1..=25).await;
+            wait_random(1..=50).await;
 
-            let mut remote_channel1 = UpgradableChannel::new(remote_channel1);
+            on_local_channel1.send(local_channel2)
+                .map_err(|_| { return anyhow!("[local] Cannot send new channel notification."); })
+                .unwrap();
 
-            println!("> upgrading remote channel");
+            println!("> local upgrade sent");
+        }),
+        tokio::spawn(async move {
+            wait_random(1..=50).await;
 
-            remote_channel1.upgrade(remote_channel2)
-                .expect("Cannot upgrade remote channel.");
+            on_remote_channel1.send(remote_channel2)
+                .map_err(|_| { return anyhow!("[remote] Cannot send new channel notification."); })
+                .unwrap();
 
-            // assert!(remote_channel1.is_upgrdaded());
-
-            println!("> remote channel upgraded");
+            println!("> remote upgrade sent");
         }),
     ).unwrap();
 
-    println!("> all channels upgraded");
+    println!("> done");
 }
