@@ -11,7 +11,7 @@ impl AsyncWrite for UpgradableChannel {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         {
-            println!("[{}][writer][write]> getting lock", self.id);
+            // println!("[{}][writer][write]> getting channel2 lock", self.id);
 
             let mut lock = self.channel2_writer.lock().unwrap();
 
@@ -26,12 +26,8 @@ impl AsyncWrite for UpgradableChannel {
         }
         println!("[{}][writer][write]> writing to the main channel", self.id);
 
-        let result = self.main_channel.as_mut()
+        return self.main_channel.as_mut()
             .poll_write(cx, buf);
-
-        println!("[{}][writer][write]> main channel result: {:?}", self.id, result);
-
-        return result;
     }
 
     fn poll_flush(
@@ -39,7 +35,7 @@ impl AsyncWrite for UpgradableChannel {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         {
-            println!("[{}][writer][flush]> getting lock", self.id);
+            // println!("[{}][writer][flush]> getting channel2 lock", self.id);
 
             let mut lock = self.channel2_writer.lock().unwrap();
 
@@ -66,7 +62,7 @@ impl AsyncWrite for UpgradableChannel {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         {
-            println!("[{}][writer][shutdown]> getting lock", self.id);
+            // println!("[{}][writer][shutdown]> getting channel2 lock", self.id);
 
             let mut lock = self.channel2_writer.lock().unwrap();
 
