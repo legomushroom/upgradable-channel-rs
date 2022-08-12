@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, pin::Pin};
+use std::{sync::{Arc, Mutex}, pin::Pin, task::Waker};
 
 use anyhow::{Result, bail};
 use tokio_util::codec::Framed;
@@ -13,11 +13,9 @@ async fn handle_control_message(
     id: String,
     on_new_channel: Receiver<Box<dyn Channel>>,
     mut control_channel: TFramedChannel<ChannelMessage>,
-    // reader: TReadHalf,
-    // writer: TWriteHalf,
     channel2_reader: Arc<Mutex<Option<TReadHalf>>>,
     channel2_writer: Arc<Mutex<Option<TWriteHalf>>>,
-    channel2_buffer_sender: Sender<Vec<u8>>,
+    // channel2_buffer_sender: Sender<Vec<u8>>,
 ) -> Result<()> {
     let our_sync_id = random_str(32);
 
@@ -75,6 +73,7 @@ async fn handle_control_message(
                             println!("[{}][upgrade][sync]> upgrade for writes", id);
                             channel2_writer.lock().unwrap()
                                 .replace(w);
+                            println!("[{}][upgrade][sync]> upgraded for writes", id);
 
                         }
                         // println!("[{}][upgrade][sync]> writer unlock", id);
@@ -91,6 +90,7 @@ async fn handle_control_message(
                             println!("[{}][upgrade][sync-ack]> upgrade for reads", id);
                             channel2_reader.lock().unwrap()
                                 .replace(r);
+                            println!("[{}][upgrade][sync-ack]> upgraded for reads", id);
                         }
                         // println!("[{}][upgrade][sync-ack]> reader unlock", id);
                     
@@ -101,6 +101,7 @@ async fn handle_control_message(
                             println!("[{}][upgrade][sync-ack]> upgrade for writes", id);
                             channel2_writer.lock().unwrap()
                                 .replace(w);
+                            println!("[{}][upgrade][sync-ack]> upgraded for writes", id);
                         }
                         // println!("[{}][upgrade][sync-ack]> writer unlock", id);
 
@@ -120,6 +121,8 @@ async fn handle_control_message(
 
                             channel2_reader.lock().unwrap()
                                 .replace(r);
+
+                            println!("[{}][upgrade][ack]> upgraded for reads", id);
                         }
                         // println!("[{}][upgrade][ack]> reader unlock", id);
 
@@ -137,7 +140,8 @@ pub async fn handle_upgrade(
     control_channel: Box<dyn Channel>,
     channel2_reader: Arc<Mutex<Option<TReadHalf>>>,
     channel2_writer: Arc<Mutex<Option<TWriteHalf>>>,
-    channel2_buffer_sender: Sender<Vec<u8>>,
+    // channel2_buffer_sender: Sender<Vec<u8>>,
+    last_read_waker: Arc<Mutex<Option<Waker>>>,
 ) -> Result<()> {
     // create control message channel stream
     let control_channel = Framed::new(
@@ -151,8 +155,15 @@ pub async fn handle_upgrade(
         control_channel,
         channel2_reader,
         channel2_writer,
-        channel2_buffer_sender,
+        // channel2_buffer_sender,
     ).await;
+
+    let mut lock = last_read_waker.lock().unwrap();
+    if let Some(waker) = lock.take() {
+        waker.wake();
+    }
+
+    println!("handle_control_message returned: {:?}", _res);
 
     return Ok(());
 }

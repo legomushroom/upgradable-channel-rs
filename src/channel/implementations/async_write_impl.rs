@@ -11,19 +11,27 @@ impl AsyncWrite for UpgradableChannel {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         {
-            // println!("[{}][write]> writer lock", self.id);
+            println!("[{}][writer][write]> getting lock", self.id);
 
             let mut lock = self.channel2_writer.lock().unwrap();
 
+            // println!("[{}][writer][write]> got channel2 lock", self.id);
+
             if let Some(writer) = lock.as_mut() {
+                println!("[{}][writer][write]> writing to channel2", self.id);
+
                 return writer.as_mut()
                     .poll_write(cx, buf);
             };
         }
-            // println!("[{}][write]> writer unlock", self.id);
+        println!("[{}][writer][write]> writing to the main channel", self.id);
 
-        return self.main_channel.as_mut()
+        let result = self.main_channel.as_mut()
             .poll_write(cx, buf);
+
+        println!("[{}][writer][write]> main channel result: {:?}", self.id, result);
+
+        return result;
     }
 
     fn poll_flush(
@@ -31,16 +39,23 @@ impl AsyncWrite for UpgradableChannel {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         {
-            // println!("[{}][flush]> writer lock", self.id);
+            println!("[{}][writer][flush]> getting lock", self.id);
+
             let mut lock = self.channel2_writer.lock().unwrap();
 
+            // println!("[{}][writer][flush]> got channel2 lock", self.id);
+
             if let Some(writer) = lock.as_mut() {
+                println!("[{}][writer][flush]> flushing channel2", self.id);
+
                 return writer.as_mut()
                     .poll_flush(cx);
             };
         }
 
         // println!("[{}][flush]> writer unlock", self.id);
+
+        println!("[{}][writer][flush]> flushing main channel", self.id);
 
         return self.main_channel.as_mut()
             .poll_flush(cx);
@@ -51,10 +66,15 @@ impl AsyncWrite for UpgradableChannel {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<()>> {
         {
-            // println!("[{}][shutdown]> writer lock", self.id);
+            println!("[{}][writer][shutdown]> getting lock", self.id);
+
             let mut lock = self.channel2_writer.lock().unwrap();
 
+            // println!("[{}][writer][shutdown]> got channel2 lock", self.id);
+
             if let Some(writer) = lock.as_mut() {
+                println!("[{}][writer][shutdown]> shutdown channel2", self.id);
+
                 return writer.as_mut()
                     .poll_shutdown(cx);
             };

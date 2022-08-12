@@ -138,11 +138,11 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncRead fo
         // otherwise run the read future to completion
         let result = ready!(self.channel.as_mut().poll_read(cx, buf));
 
-        println!("[{}]> read some data: {:?}", self.id, result);
+        // println!("[{}]> read some data: {:?}", self.id, result);
 
         // optionally create a throttle delay future
         if random_bool() {
-            println!("[{}]> create new timeout", self.id);
+            // println!("[{}]> create new timeout", self.id);
         
             self.read_delay_future = Some(Box::pin(wait_random(self.options.throttle_range.clone())));
         }
@@ -168,7 +168,7 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncWrite f
 
         // optionally create a throttle delay future
         if random_bool() {
-            println!("[{}]> create new timeout", self.id);
+            // println!("[{}]> create new timeout", self.id);
         
             self.write_delay_future = Some(Box::pin(wait_random(self.options.throttle_range.clone())));
         }
