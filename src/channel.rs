@@ -81,9 +81,9 @@ impl UpgradableChannel {
 #[cfg(test)]
 mod tests {
     use anyhow::anyhow;
-    use cs_utils::{traits::Random, random_str_rg, futures::{wait_random, with_thread}};
+    use cs_utils::{traits::Random, random_str_rg, futures::wait_random};
     use rstest::rstest;
-    use tokio::io::{AsyncWriteExt, AsyncReadExt};
+    use connection_utils::test::test_async_stream;
 
     use crate::{mocks::{ChannelMockOptions, channel_mock_pair}, UpgradableChannel};
 
@@ -99,53 +99,21 @@ mod tests {
         let (local_channel1, remote_channel1) = channel_mock_pair(options1.clone(), options1.clone());
         let (local_channel2, remote_channel2) = channel_mock_pair(options2.clone(), options2.clone());
 
-        let (on_local_channel1, mut local_upgradable_channel1) = UpgradableChannel::new("local", local_channel1);
-        let (on_remote_channel1, mut remote_upgradable_channel1) = UpgradableChannel::new("remote", remote_channel1);
-
-        let test_data1 = test_data.clone();
-        let test_data2 = test_data.clone();
+        let (on_local_channel1, local_upgradable_channel1) = UpgradableChannel::new("local", local_channel1);
+        let (on_remote_channel1, remote_upgradable_channel1) = UpgradableChannel::new("remote", remote_channel1);
 
         let _res = tokio::join!(
-            Box::pin((async move {
-                println!("> starting data transfer 1");
+            Box::pin(async move {
+                println!("> starting data transfer");
 
-                let test_data1 = test_data1.as_bytes();
+                test_async_stream(
+                    local_upgradable_channel1,
+                    remote_upgradable_channel1,
+                    test_data,
+                ).await;
 
-                let mut written = 0;
-                while written < test_data1.len() {
-                    written += local_upgradable_channel1.write(&test_data1[written..]).await.unwrap();
-                }
-
-                println!("> data transfer complete 1");
-            })),
-            Box::pin((async move {
-                println!("> starting data transfer 2");
-
-                let mut received_data = "".to_string();
-
-                let mut buf = [0; 256];
-                loop {
-                    let bytes_read = remote_upgradable_channel1.read(&mut buf).await.unwrap();
-
-                    let data = &buf[..bytes_read];
-                    let received_str = String::from_utf8(data.to_vec()).unwrap();
-
-                    received_data = format!("{received_data}{received_str}");
-
-                    assert!(
-                        test_data2.starts_with(&received_data),
-                        "Data corruption, sent and received data do not match.",
-                    );
-
-                    println!(">> all good so far");
-
-                    if received_data.len() == test_data2.len() {
-                        break;
-                    }
-                }
-
-                println!("> data transfer complete 2");
-            })),
+                println!("> data transfer complete");
+            }),
             Box::pin(async move {
                 wait_random(1..=25).await;
 
