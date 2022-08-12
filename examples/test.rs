@@ -1,14 +1,12 @@
 use anyhow::anyhow;
 use connection_utils::test::test_async_stream;
-use cs_utils::{futures::wait_random, random_number, random_str};
+use cs_utils::{futures::wait_random, random_str, traits::Random};
 use upgradable_channel::{UpgradableChannel, mocks::{channel_mock_pair, ChannelMockOptions}};
 
 #[tokio::main]
 async fn main() {
-    let options1 = ChannelMockOptions::default()
-        .throttle_ms(random_number(1..=3));
-    let options2 = ChannelMockOptions::default()
-        .throttle_ms(random_number(1..=3));
+    let options1 = ChannelMockOptions::random();
+    let options2 = ChannelMockOptions::random();
 
     let (local_channel1, remote_channel1) = channel_mock_pair(options1.clone(), options1.clone());
     let (local_channel2, remote_channel2) = channel_mock_pair(options2.clone(), options2.clone());

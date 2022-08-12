@@ -3,9 +3,9 @@ use std::pin::Pin;
 use anyhow::{bail, Result};
 use connection_utils::Channel;
 use cs_utils::futures::GenericCodec;
-use futures::{StreamExt, stream::{SplitStream, SplitSink}, future::select_all, Future, select, FutureExt, SinkExt};
 use serde::{Serialize, Deserialize};
 use tokio::io::{duplex, DuplexStream, split, WriteHalf, ReadHalf, AsyncReadExt, AsyncWriteExt};
+use futures::{StreamExt, stream::{SplitStream, SplitSink}, future::select_all, Future, select, FutureExt, SinkExt};
 
 mod child_channel;
 use child_channel::ChildChannel;
@@ -123,15 +123,13 @@ pub fn divide_channel(
     return (child_channel1, child_channel2);
 }
 
-
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use serde::{Serialize, Deserialize};
     use connection_utils::test::test_async_stream;
-    use cs_utils::{random_number, random_str_rg, random_str, futures::wait_random, traits::Random};
+    use cs_utils::{random_number, random_str, futures::wait_random, traits::Random};
     
-    use crate::utils::test_framed_stream;
+    use crate::utils::{test_framed_stream, TestOptions, StreamTestMessage};
     use crate::utils::create_framed_stream;
     use crate::mocks::{channel_mock_pair, ChannelMockOptions};
 
@@ -289,34 +287,46 @@ mod tests {
         ).await;
     }
 
-    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-    pub enum StreamMessage {
-        Ping(String),
-        Pong(String),
-        Data(Vec<u8>),
-        Eof,
-    }
+    #[rstest]
+    #[case(128, 8)]
+    #[case(256, 16)]
+    #[case(512, 32)]
+    #[case(1_024, 64)]
+    #[case(2_048, 128)]
+    #[case(4_096, 256)]
+    #[tokio::test]
+    async fn works_if_second_channel_is_a_stream(
+        #[case] test_data_size: usize,
+        #[case] items_count: u32,
+    ) {
+        let (local_channel, remote_channel) = channel_mock_pair(ChannelMockOptions::random(), ChannelMockOptions::random());
 
-    impl Random for StreamMessage {
-        fn random() -> StreamMessage {
-            return match random_number(0..=u16::MAX) % 4 {
-                0 => StreamMessage::Ping(random_str(32)),
-                1 => StreamMessage::Pong(random_str(64)),
-                2 => StreamMessage::Data(random_str_rg(8..=256).as_bytes().to_vec()),
-                3 => StreamMessage::Eof,
-                _ => unreachable!(),
-            };
-        }
-    }
+        let (local_channel1, local_channel2) = divide_channel(local_channel);
+        let (remote_channel1, remote_channel2) = divide_channel(remote_channel);
 
-    fn random_stream_message_data(number: usize) -> Vec<StreamMessage> {
-        let mut result = vec![];
+        let local_channel2 = create_framed_stream::<StreamTestMessage>(local_channel2);
+        let remote_channel2 = create_framed_stream::<StreamTestMessage>(remote_channel2);
 
-        for _ in 0..number {
-            result.push(StreamMessage::random());
-        }
+        tokio::try_join!(
+            tokio::spawn(async move {
+                wait_random(1..=25).await;
 
-        return result;
+                test_async_stream(
+                    local_channel1,
+                    remote_channel1,
+                    random_str(test_data_size),
+                ).await;
+            }),
+            tokio::spawn(async move {
+                wait_random(1..=25).await;
+
+                test_framed_stream(
+                    local_channel2,
+                    remote_channel2,
+                    TestOptions::random().items_count(items_count),
+                ).await;
+            }),
+        ).unwrap();
     }
 
     #[rstest]
@@ -327,26 +337,71 @@ mod tests {
     #[case(2_048, 128)]
     #[case(4_096, 256)]
     #[tokio::test]
-    async fn works_if_second_channel_is_a_stream(
-        #[case] test_data_size1: usize,
-        #[case] test_data_size2: usize,
+    async fn works_if_first_channel_is_a_stream(
+        #[case] test_data_size: usize,
+        #[case] items_count: u32,
     ) {
         let (local_channel, remote_channel) = channel_mock_pair(ChannelMockOptions::random(), ChannelMockOptions::random());
 
         let (local_channel1, local_channel2) = divide_channel(local_channel);
         let (remote_channel1, remote_channel2) = divide_channel(remote_channel);
 
-        let local_channel2 = create_framed_stream::<StreamMessage>(local_channel2);
-        let remote_channel2 = create_framed_stream::<StreamMessage>(remote_channel2);
+        let local_channel1 = create_framed_stream::<StreamTestMessage>(local_channel1);
+        let remote_channel1 = create_framed_stream::<StreamTestMessage>(remote_channel1);
 
         tokio::try_join!(
             tokio::spawn(async move {
                 wait_random(1..=25).await;
 
-                test_async_stream(
+                test_framed_stream(
                     local_channel1,
                     remote_channel1,
-                    random_str(test_data_size1),
+                    TestOptions::random().items_count(items_count),
+                ).await;
+            }),
+            tokio::spawn(async move {
+                wait_random(1..=25).await;
+
+                test_async_stream(
+                    local_channel2,
+                    remote_channel2,
+                    random_str(test_data_size),
+                ).await;
+            }),
+        ).unwrap();
+    }
+
+    #[rstest]
+    #[case(random_number(6..=8), random_number(6..=8))]
+    #[case(random_number(12..=16), random_number(12..=16))]
+    #[case(random_number(25..=32), random_number(25..=32))]
+    #[case(random_number(53..=64), random_number(53..=64))]
+    #[case(random_number(100..=128), random_number(100..=128))]
+    #[case(random_number(200..=256), random_number(200..=256))]
+    #[tokio::test]
+    async fn works_if_all_channels_are_streams(
+        #[case] items_count1: u32,
+        #[case] items_count2: u32,
+    ) {
+        let (local_channel, remote_channel) = channel_mock_pair(ChannelMockOptions::random(), ChannelMockOptions::random());
+
+        let (local_channel1, local_channel2) = divide_channel(local_channel);
+        let (remote_channel1, remote_channel2) = divide_channel(remote_channel);
+
+        let local_channel1 = create_framed_stream::<StreamTestMessage>(local_channel1);
+        let remote_channel1 = create_framed_stream::<StreamTestMessage>(remote_channel1);
+
+        let local_channel2 = create_framed_stream::<StreamTestMessage>(local_channel2);
+        let remote_channel2 = create_framed_stream::<StreamTestMessage>(remote_channel2);
+
+        tokio::try_join!(
+            tokio::spawn(async move {
+                wait_random(1..=25).await;
+
+                test_framed_stream(
+                    local_channel1,
+                    remote_channel1,
+                    TestOptions::random().items_count(items_count1),
                 ).await;
             }),
             tokio::spawn(async move {
@@ -355,7 +410,7 @@ mod tests {
                 test_framed_stream(
                     local_channel2,
                     remote_channel2,
-                    random_stream_message_data(test_data_size2),
+                    TestOptions::random().items_count(items_count2),
                 ).await;
             }),
         ).unwrap();

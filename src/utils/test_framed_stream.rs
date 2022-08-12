@@ -1,60 +1,138 @@
-use std::fmt::Debug;
-use connection_utils::types::TFramedChannel;
-use cs_utils::{random_bool, futures::wait_random};
 use futures::{StreamExt, SinkExt};
+use std::{fmt::Debug, ops::RangeInclusive};
+use connection_utils::types::TFramedChannel;
+use serde::{Serialize, de::DeserializeOwned, Deserialize};
+use cs_utils::{random_bool, futures::wait_random, random_number, traits::Random, random_str, random_str_rg, test::random_vec};
 
-use serde::{Serialize, de::DeserializeOwned};
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum StreamTestMessage {
+    Ping(String),
+    Pong(Option<String>, String),
+    Data(Vec<u8>),
+    Eof,
+}
+
+impl Random for StreamTestMessage {
+    fn random() -> StreamTestMessage {
+        return match random_number(0..=u16::MAX) % 4 {
+            0 => StreamTestMessage::Ping(random_str_rg(16..=32)),
+            1 => StreamTestMessage::Pong(Some(random_str(32)), random_str_rg(32..=64)),
+            2 => StreamTestMessage::Data(random_str_rg(8..=256).as_bytes().to_vec()),
+            3 => StreamTestMessage::Eof,
+            _ => unreachable!(),
+        };
+    }
+}
+
+pub struct TestOptions {
+    items_count: u32,
+    throttle_range: RangeInclusive<u64>,
+}
+
+impl TestOptions {
+    pub fn throttle(
+        self,
+        throttle_range: RangeInclusive<u64>,
+    ) -> TestOptions {
+        return TestOptions {
+            throttle_range,
+            ..self
+        }
+    }
+
+    pub fn items_count(
+        self,
+        items_count: u32,
+    ) -> TestOptions {
+        return TestOptions {
+            items_count,
+            ..self
+        }
+    }
+}
+
+impl Default for TestOptions {
+    fn default() -> TestOptions {
+        return TestOptions {
+            items_count: 32,
+            throttle_range: (0..=0),
+        };
+    }
+}
+
+impl Random for TestOptions {
+    fn random() -> TestOptions {
+        let min: u64 = random_number(0..5);
+        let max: u64 = random_number(5..50);
+    
+        return TestOptions {
+            items_count: random_number(8..=256),
+            throttle_range: (min..=max),
+        };
+    }
+}
 
 // TODO: move to the `connection-utils` crate
-pub async fn test_framed_stream<T: Serialize + DeserializeOwned + PartialEq + Clone + Debug>(
+pub async fn test_framed_stream<T: Serialize + DeserializeOwned + PartialEq + Clone + Debug + Random>(
+    stream1: TFramedChannel<T>,
+    stream2: TFramedChannel<T>,
+    options: TestOptions,
+) -> (TFramedChannel<T>, TFramedChannel<T>, TestOptions) {
+    // test in backward direction
+    let (stream2, stream1, options) = run_framed_stream_test(stream2, stream1, options).await;
+    // test in forward direction
+    return run_framed_stream_test(stream1, stream2, options).await;
+}
+
+async fn run_framed_stream_test<T: Serialize + DeserializeOwned + PartialEq + Clone + Debug + Random>(
     mut stream1: TFramedChannel<T>,
     mut stream2: TFramedChannel<T>,
-    data: Vec<T>,
-) {
-    let data_len = data.len();
+    options: TestOptions,
+) -> (TFramedChannel<T>, TFramedChannel<T>, TestOptions) {
+    let data_len = options.items_count;
+    let data = random_vec::<T>(data_len);
 
-    let future1 = Box::pin(async move {
-        for message in &data {
-            if random_bool() {
-                wait_random(5..=150).await;
+    let throttle_range1 = options.throttle_range.clone();
+    let throttle_range2 = options.throttle_range.clone();
+
+    let ((stream1, data), (stream2, received_data)) = tokio::join!(
+        Box::pin(async move {
+            for message in &data {
+                if random_bool() {
+                    wait_random(throttle_range1.clone()).await;
+                }
+    
+                stream1.send(message.clone()).await.unwrap();
             }
-
-            stream1.send(message.clone()).await.unwrap();
-        }
-
-        return data;
-    });
-
-    let future2 = Box::pin(async move {
-        let mut received_data = vec![];
-
-        loop {
-            if random_bool() {
-                wait_random(5..=150).await;
+    
+            return (stream1, data);
+        }),
+        Box::pin(async move {
+            let mut received_data = vec![];
+    
+            loop {
+                wait_random(throttle_range2.clone()).await;
+    
+                let message = stream2.next().await
+                    .expect("Stream closed.")
+                    .expect("Cannot read stream message.");
+    
+                received_data.push(message);
+    
+                if received_data.len() == data_len as usize {
+                    break;
+                }
             }
-
-            let message = stream2.next().await
-                .expect("Stream closed.")
-                .expect("Cannot read stream message.");
-
-            received_data.push(message);
-
-            if received_data.len() == data_len {
-                break;
-            }
-        }
-
-        return received_data;
-    });
-
-    let (result1, result2) = tokio::join!(
-        future1,
-        future2,
+    
+            return (stream2, received_data);
+        }),
     );
 
     assert_eq!(
-        result1,
-        result2,
+        data,
+        received_data,
         "Sent and received data must match.",
     );
+
+    return (stream1, stream2, options);
 }
