@@ -2,7 +2,7 @@ use futures::{StreamExt, SinkExt};
 use std::{fmt::Debug, ops::RangeInclusive};
 use connection_utils::types::TFramedChannel;
 use serde::{Serialize, de::DeserializeOwned, Deserialize};
-use cs_utils::{random_bool, futures::wait_random, random_number, traits::Random, random_str, random_str_rg, test::random_vec};
+use cs_utils::{futures::wait_random, random_number, traits::Random, random_str, random_str_rg, test::random_vec};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum StreamTestMessage {
@@ -30,6 +30,7 @@ pub struct TestOptions {
 }
 
 impl TestOptions {
+    #[allow(unused)] // TODO: remove
     pub fn throttle(
         self,
         throttle_range: RangeInclusive<u64>,
@@ -98,9 +99,7 @@ async fn run_framed_stream_test<T: Serialize + DeserializeOwned + PartialEq + Cl
     let ((stream1, data), (stream2, received_data)) = tokio::join!(
         Box::pin(async move {
             for message in &data {
-                if random_bool() {
-                    wait_random(throttle_range1.clone()).await;
-                }
+                wait_random(throttle_range1.clone()).await;
     
                 stream1.send(message.clone()).await.unwrap();
             }

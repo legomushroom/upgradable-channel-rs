@@ -4,5 +4,5 @@ use serde::{Serialize, Deserialize};
 pub enum ChannelMessage {
     Sync(String),
     SyncAck(String, String),
-    Ack(String),
+    Ack(String, String),
 }

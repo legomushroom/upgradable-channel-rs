@@ -3,7 +3,7 @@ use std::{pin::Pin, task::{Context, Poll}, io, ops::RangeInclusive};
 use futures::{Future, ready};
 use connection_utils::Channel;
 use tokio::io::{duplex, AsyncRead, AsyncWrite, ReadBuf, DuplexStream};
-use cs_utils::{random_number, random_str, random_bool, futures::wait_random, traits::Random};
+use cs_utils::{random_number, random_str, futures::wait_random, traits::Random};
 
 // TODO: move to `cs-utils` crate
 // pub fn wait_sync(timeout_ms: u64) {
@@ -141,11 +141,11 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncRead fo
         // println!("[{}]> read some data: {:?}", self.id, result);
 
         // optionally create a throttle delay future
-        if random_bool() {
+        // if random_bool() {
             // println!("[{}]> create new timeout", self.id);
         
-            self.read_delay_future = Some(Box::pin(wait_random(self.options.throttle_range.clone())));
-        }
+        self.read_delay_future = Some(Box::pin(wait_random(self.options.throttle_range.clone())));
+        // }
 
         return Poll::Ready(result);
     }
@@ -167,11 +167,11 @@ impl<TAsyncDuplex: AsyncRead + AsyncWrite + Send + Unpin + 'static> AsyncWrite f
         let result = ready!(self.channel.as_mut().poll_write(cx, buf));
 
         // optionally create a throttle delay future
-        if random_bool() {
+        // if random_bool() {
             // println!("[{}]> create new timeout", self.id);
         
-            self.write_delay_future = Some(Box::pin(wait_random(self.options.throttle_range.clone())));
-        }
+        self.write_delay_future = Some(Box::pin(wait_random(self.options.throttle_range.clone())));
+        // }
 
         return Poll::Ready(result);
     }

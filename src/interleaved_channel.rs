@@ -2,9 +2,9 @@ use std::pin::Pin;
 
 use anyhow::{bail, Result};
 use connection_utils::Channel;
-use cs_utils::futures::GenericCodec;
+use cs_utils::futures::{GenericCodec, wait};
 use serde::{Serialize, Deserialize};
-use tokio::io::{duplex, DuplexStream, split, WriteHalf, ReadHalf, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{duplex, split, WriteHalf, ReadHalf, AsyncReadExt, AsyncWriteExt, AsyncRead, AsyncWrite};
 use futures::{StreamExt, stream::{SplitStream, SplitSink}, future::select_all, Future, select, FutureExt, SinkExt};
 
 mod child_channel;
@@ -19,27 +19,70 @@ pub enum LayerMessage {
 
 async fn forward_reads(
     mut channel: SplitStream<Framed<Box<dyn Channel>, GenericCodec<LayerMessage>>>,
-    mut child1: WriteHalf<DuplexStream>,
-    mut child2: WriteHalf<DuplexStream>,
+    mut child1: WriteHalf<Pin<Box<dyn Channel>>>,
+    mut child2: WriteHalf<Pin<Box<dyn Channel>>>,
 )-> Result<()> {
     let mut child1 = Pin::new(&mut child1);
     let mut child2 = Pin::new(&mut child2);
 
+    let mut child1_shutdown = false;
+    let mut child2_shutdown = false;
+
     loop {
         let item = match channel.next().await {
             Some(item) => item?,
-            None => bail!("Stream closed."),
+            None => {
+                println!("[forward_reads]> stream closed!");
+                
+                bail!("Stream closed.");
+            },
         };
+
+        println!("[forward][forward_reads]> got item");
 
         // TODO: channels should not block each other, use `write()` instead.
         //  Or maybe run the channels under a separate thread.
         //  Or maybe use buffers.
         match item {
             LayerMessage::Channel1(data) => {
+                println!("[1][forward_reads]> got message: {:?}", data.len());
+
+                assert!(!child1_shutdown, "Child1 already shutdown.");
+
+                if data.len() == 0 {
+                    child1.shutdown().await?;
+
+                    child1_shutdown = true;
+
+                    continue;
+                }
+
+                println!("[1][forward_reads]> writing all");
+
                 child1.write_all(&data[..]).await?;
+
+                println!("[1][forward_reads]> written all");
             },
             LayerMessage::Channel2(data) => {
+                println!("[2][forward_reads]> got message: {:?}", data.len());
+
+                assert!(!child2_shutdown, "Child2 already shutdown.");
+
+                if data.len() == 0 {
+                    child2.shutdown().await?;
+
+                    println!("[2][forward_reads]> shut down");
+
+                    child2_shutdown = true;
+
+                    continue;
+                }
+
+                println!("[2][forward_reads]> writing all");
+
                 child2.write_all(&data[..]).await?;
+
+                println!("[2][forward_reads]> written all");
             },
         };
     }
@@ -47,8 +90,8 @@ async fn forward_reads(
 
 async fn forward_writes(
     mut channel: SplitSink<Framed<Box<dyn Channel>, GenericCodec<LayerMessage>>, LayerMessage>,
-    mut child1: ReadHalf<DuplexStream>,
-    mut child2: ReadHalf<DuplexStream>,
+    mut child1: ReadHalf<Pin<Box<dyn Channel>>>,
+    mut child2: ReadHalf<Pin<Box<dyn Channel>>>,
 ) -> Result<()> {
     let mut child1 = Pin::new(&mut child1);
     let mut child2 = Pin::new(&mut child2);
@@ -56,17 +99,43 @@ async fn forward_writes(
     let mut buf1 = [0; 1024];
     let mut buf2 = [0; 1024];
 
+    let mut child1_shutdown = false;
+    let mut child2_shutdown = false;
+
     loop {
         select! {
             maybe_bytes_read = child1.read(&mut buf1).fuse() => {
+                if child1_shutdown {
+                    wait(1).await;
+                    continue;
+                }
+
+                println!("[1][forward-writes]> maybe_bytes_read: {:?}", maybe_bytes_read);
                 let bytes_read = maybe_bytes_read?;
 
                 channel.send(LayerMessage::Channel1(buf1[..bytes_read].to_vec())).await?;
+
+                if bytes_read == 0 {
+                    println!("[1][forward-writes]> shut down");
+                    child1_shutdown = true;
+                }
             },
             maybe_bytes_read = child2.read(&mut buf2).fuse() => {
+                if child2_shutdown {
+                    wait(1).await;
+                    continue;
+                }
+
+                println!("[2][forward-writes]> maybe_bytes_read: {:?}", maybe_bytes_read);
+
                 let bytes_read = maybe_bytes_read?;
 
                 channel.send(LayerMessage::Channel2(buf2[..bytes_read].to_vec())).await?;
+
+                if bytes_read == 0 {
+                    println!("[2][forward-writes]> shut down");
+                    child2_shutdown = true;
+                }
             },
         }
     }
@@ -74,9 +143,12 @@ async fn forward_writes(
 
 fn forward(
     channel: Box<dyn Channel>,
-    child1: DuplexStream,
-    child2: DuplexStream,
+    child1: Box<dyn Channel>,
+    child2: Box<dyn Channel>,
 ) {
+    let child1 = Pin::new(child1);
+    let child2 = Pin::new(child2);
+
     let (sink, source) = Framed::new(
         channel,
         GenericCodec::<LayerMessage>::new(),
@@ -86,8 +158,30 @@ fn forward(
     let (child2_read, child2_write) = split(child2);
 
     let futures: Vec<Pin<Box<dyn Future<Output = _> + Send + 'static>>> = vec![
-        Box::pin(forward_reads(source, child1_write, child2_write)),
-        Box::pin(forward_writes(sink, child1_read, child2_read)),
+        Box::pin(async move {
+            match forward_reads(source, child1_write, child2_write).await {
+                Ok(_) => {
+                    println!("[forward]> forward_reads succeed");
+                },
+                Err(error) => {
+                    println!("[forward]> forward_reads failed");
+
+                    panic!("[forward]> forward_reads failed {}", error);
+                },
+            };
+        }),
+        Box::pin(async move {
+            match forward_writes(sink, child1_read, child2_read).await {
+                Ok(_) => {
+                    println!("[forward]> forward_writes succeed");
+                },
+                Err(error) => {
+                    println!("[forward]> forward_writes failed");
+
+                    panic!("[forward]> forward_writes failed {}", error);
+                },
+            };
+        }),
     ];
 
     let _res = tokio::spawn(select_all(futures));
@@ -96,6 +190,8 @@ fn forward(
 pub fn divide_channel(
     channel: Box<dyn Channel>,
 ) -> (Box<dyn Channel>, Box<dyn Channel>) {
+    let id = channel.id();
+    let label = channel.label().clone();
     // TODO: add `buffer_size` attribute to the Channel trait
     // let buffer_size = channel.buffer_size();
     
@@ -103,21 +199,29 @@ pub fn divide_channel(
     let (child2_sink, child2_source) = duplex(1024);
 
     let child_channel1 = ChildChannel::new(
-        channel.id(),
-        channel.label(),
+        id,
+        &label,
         Box::new(child1_sink),
     );
 
     let child_channel2 = ChildChannel::new(
-        channel.id(),
-        channel.label(),
+        id,
+        &label,
         Box::new(child2_sink),
     );
 
     forward(
         channel,
-        child1_source,
-        child2_source,
+        ChildChannel::new(
+            id,
+            &label,
+            Box::new(child1_source),
+        ),
+        ChildChannel::new(
+            id,
+            &label,
+            Box::new(child2_source),
+        ),
     );
 
     return (child_channel1, child_channel2);
