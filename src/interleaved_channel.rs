@@ -519,4 +519,36 @@ mod tests {
             }),
         ).unwrap();
     }
+
+    #[rstest]
+    // #[case(128)]
+    // #[case(256)]
+    // #[case(512)]
+    #[case(1_024)]
+    // #[case(2_048)]
+    // #[case(4_096)]
+    // #[case(8_192)]
+    // #[case(16_384)]
+    // #[case(32_768)]
+    // #[case(65_536)]
+    #[tokio::test]
+    async fn closes_channel_if_remote_counterpart_is_closed(
+        #[case] test_data_size: usize,
+    ) {
+        let (
+            local_channel,
+            remote_channel,
+        ) = channel_mock_pair(ChannelMockOptions::random(), ChannelMockOptions::random());
+
+        let (local_channel1, local_channel2) = divide_channel(local_channel);
+        let (remote_channel1, remote_channel2) = divide_channel(remote_channel);
+
+        test_async_stream(
+            local_channel1,
+            remote_channel1,
+            random_str(test_data_size),
+        ).await;
+
+        // local_channel1
+    }
 }

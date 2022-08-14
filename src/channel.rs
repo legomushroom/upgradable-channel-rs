@@ -195,8 +195,8 @@ mod tests {
         // #[case(random_str_rg(64_000..=65_536), 0..=0)]
         // #[case(random_str_rg(64_000..=65_536), 5..=25)]
         // #[case(random_str_rg(64_000..=65_536), 10..=75)]
-        // #[case(random_str_rg(64_000..=65_536), 40..=200)]
-        #[case(data_transfer_string(40_000), 5..=250)]
+        #[case(random_str_rg(64_000..=65_536), 5..=250)]
+        // #[case(data_transfer_string(40_000), 5..=250)]
         #[tokio::test]
         async fn upgrades_to_a_new_channel_channels_latency(
             #[case] test_data: String,
